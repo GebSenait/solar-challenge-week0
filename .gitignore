@@ -1,0 +1,7 @@
+# Ignore Python Virtual Environment
+venv/
+
+# Ignore common files
+*.csv
+*.ipynb_checkpoints/
+data/
