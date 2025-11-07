@@ -1,1 +1,8 @@
+# Core Data Handling
 pandas
+numpy
+
+# Visualization (Missing from your pip freeze)
+matplotlib
+seaborn
+plotly
