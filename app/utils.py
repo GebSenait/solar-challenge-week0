@@ -6,22 +6,33 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 import plotly.graph_objects as go
+from pathlib import Path  # <-- New Import
 
-# --- CRITICAL FIX: CORRECTED DATA PATHS ---
-# Using '../data/' to access files one level up from the 'app' folder
+# --- FIX: USE PATHLIB TO ANCHOR PATHS RELATIVE TO THIS FILE ---
+
+# Get the path to the directory containing the current script (app/utils.py)
+CURRENT_DIR = Path(__file__).parent
+# Now, define the data directory path by going up one level and into the 'data' folder
+DATA_DIR = CURRENT_DIR.parent / "data"
+
 file_names = {
-    "Benin": "../data/benin-malamville.csv",
-    "Sierra Leone": "../data/sierraleone-bumbuna.csv",
-    "Togo": "../data/togo-dapaong-qc.csv"
+    # Use the absolute path derived from the script location
+    "Benin": DATA_DIR / "benin-malamville.csv",
+    "Sierra Leone": DATA_DIR / "sierraleone-bumbuna.csv",
+    "Togo": DATA_DIR / "togo-dapaong-qc.csv"
 }
 
 @st.cache_data
 def load_data(country):
     """Loads and preprocesses the data for the given country."""
+    
+    # CRITICAL FIX: Ensure the file name is converted to a string for pandas read_csv
+    file_path = str(file_names[country])
+    
     try:
         # Load the data using the corrected path
         df = pd.read_csv(
-            file_names[country],
+            file_path,
             index_col='Timestamp (UTC)',
             parse_dates=True
         )
@@ -41,7 +52,7 @@ def load_data(country):
         
     except FileNotFoundError:
         # Added error handling to show up in Streamlit if the file is still missing
-        st.error(f"Error: Data file for {country} not found at {file_names[country]}.")
+        st.error(f"Error: Data file for {country} not found at {file_path}. Please check file existence and path.")
         return None
     except Exception as e:
         st.error(f"An unexpected error occurred during data loading: {e}")
