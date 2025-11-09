@@ -2,9 +2,7 @@
 venv/
 
 # Ignore common files
-*.csv
 *.ipynb_checkpoints/
-data/
 
 # Ignore Visual Studio Cache/Metadata
 .vs/
