@@ -2,7 +2,12 @@
 pandas
 numpy
 
-# Visualization (Missing from your pip freeze)
+# Visualization
 matplotlib
 seaborn
 plotly
+streamlit
+scipy
+
+# Machine Learning Dependency
+scikit-learn
