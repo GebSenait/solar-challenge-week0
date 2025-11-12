@@ -17,8 +17,10 @@ DATA_DIR = CURRENT_DIR.parent / "data"
 
 file_names = {
     # CRITICAL FILE PATH FIXES:
-    "Benin": DATA_DIR / "benin-malanville.csv",
+    # 1. Benin: Ensuring file name is correct (may fix cloud case-sensitivity)
+    "Benin": DATA_DIR / "benin-malamville.csv",
     "Sierra Leone": DATA_DIR / "sierraleone-bumbuna.csv",
+    # 2. Togo: Fixing the hyphen to an UNDERSCORE (togo-dapaong_qc.csv)
     "Togo": DATA_DIR / "togo-dapaong_qc.csv" 
 }
 
@@ -30,24 +32,23 @@ def load_data(country):
     
     try:
         # Load the data using the corrected path
-        df = pd.read_csv(file_path, parse_dates=True)
+        # Note: We defer date parsing here, as we will handle it explicitly below.
+        df = pd.read_csv(file_path)
         
         # --- CRITICAL FIX FOR TIMESTAMP COLUMN (ISSUE 2) ---
-        # Issue 3: The timestamp column name might vary between files.
-        # Expanding the list of candidates to handle Sierra Leone data structure.
         timestamp_candidates = [
             'Timestamp (UTC)', 'Timestamp', 'timestamp (utc)', 'timestamp',
             'Datetime', 'Date', 'Time (UTC)', 'time', 'date_time', 'Date/Time' # Expanded candidates
         ]
         
-        # Find the first matching column name (case-sensitive check is fine for typical data files)
+        # 1. Find the first matching column name
         timestamp_col = next(
             (col for col in df.columns if col in timestamp_candidates),
             None # If no candidate is found, set to None
         )
         
         if timestamp_col is None:
-            # Check for a single column with 'time' or 'date' (case-insensitive fallback for Sierra Leone)
+            # 2. Check for a single column with 'time' or 'date' (case-insensitive fallback)
             fuzzy_col = next(
                 (col for col in df.columns if 'time' in col.lower() or 'date' in col.lower()),
                 None
@@ -55,40 +56,73 @@ def load_data(country):
             
             if fuzzy_col:
                 timestamp_col = fuzzy_col
+
+        # --- SPECIAL HANDLING FOR SIERRA LEONE (Combine Date/Time columns) ---
+        # This combines separate Date and Time columns into a single 'Timestamp' column.
+        if country == "Sierra Leone":
+            # Look for date and time columns, ignoring case
+            date_col = next((col for col in df.columns if 'date' in col.lower() and 'time' not in col.lower()), None)
+            time_col = next((col for col in df.columns if 'time' in col.lower() and 'date' not in col.lower()), None)
+            
+            if date_col and time_col:
+                # Combine them into a new 'Timestamp' column string
+                df['Timestamp'] = df[date_col].astype(str) + ' ' + df[time_col].astype(str)
+                timestamp_col = 'Timestamp'
                 
-                # SPECIAL HANDLING FOR SIERRA LEONE (Assuming the file contains separate 'Date' and 'Time' columns)
-                if country == "Sierra Leone":
-                    # Look for date and time columns, ignoring case
-                    date_col = next((col for col in df.columns if 'date' in col.lower() and 'time' not in col.lower()), None)
-                    time_col = next((col for col in df.columns if 'time' in col.lower() and 'date' not in col.lower()), None)
-                    
-                    if date_col and time_col:
-                        # Combine them into a new 'Timestamp' column before setting index
-                        df['Timestamp'] = df[date_col].astype(str) + ' ' + df[time_col].astype(str)
-                        timestamp_col = 'Timestamp'
-                        
-                        # Drop the original date/time columns to clean up
-                        df.drop(columns=[date_col, time_col], inplace=True)
-                        
-                        # Set the combined column as index and parse it
-                        df.set_index(pd.to_datetime(df[timestamp_col], errors='coerce', utc=True), inplace=True)
-                        df.drop(columns=[timestamp_col], inplace=True) # Drop the helper column
-                        
-                        # Go straight to the filtering/feature-engineering helper
-                        return df_filtered_after_special_handling(df)
-                        
-                timestamp_col = fuzzy_col
+                # Drop the original date/time columns
+                df.drop(columns=[date_col, time_col], inplace=True)
 
-            if timestamp_col is None:
-                # If still no column is found, raise the error.
-                raise ValueError(f"Could not find a valid timestamp column in the data. Looked for: {timestamp_candidates}. Fallback check failed.")
+        if timestamp_col is None:
+            # If after all checks, no column is found, raise the error.
+            raise ValueError(f"Could not find a valid timestamp column in the data. Looked for: {timestamp_candidates}. Fallback check failed.")
 
 
-        # Set the correct timestamp column as the index
-        # This handles the case where timestamp_col was found via exact match or single fuzzy match.
-        df.set_index(timestamp_col, inplace=True)
-        # Ensure the index is datetime objects, coercing errors
-        df.index = pd.to_datetime(df.index, errors='coerce', utc=True)
+        # --- CRITICAL FIX: ROBUST DATETIME CONVERSION ---
+        # Define formats to try, handling the common Excel format (M/D/Y) and the standard one (Y-M-D)
+        datetime_formats_to_try = [
+            # 1. Excel format (M/D/Y H:M:S AM/PM) -> E.g., '8/9/2021 12:01:00 AM'
+            '%m/%d/%Y %I:%M:%S %p', 
+            # 2. Excel format (M/D/Y H:M:S 24hr) -> E.g., '8/9/2021 00:01:00'
+            '%m/%d/%Y %H:%M:%S',
+            # 3. Standard format (Y-M-D H:M:S 24hr) -> E.g., '2021-08-09 00:01:00'
+            '%Y-%m-%d %H:%M:%S',
+        ]
+        
+        # Convert the timestamp column string values to datetime objects
+        # We try multiple formats until a majority of the data is parsed.
+        df['dt_temp'] = df[timestamp_col]
+
+        for fmt in datetime_formats_to_try:
+            # Attempt conversion with the explicit format
+            df['dt_temp'] = pd.to_datetime(df['dt_temp'], format=fmt, errors='coerce')
+            
+            # Check how many conversions succeeded. If > 50% succeeded, stop trying.
+            if df['dt_temp'].notna().sum() / len(df) > 0.5:
+                break
+            
+            # If still many NaT values, try next format on the original string column
+            df['dt_temp'] = df[timestamp_col].copy()
+
+        # If the loop finished and most values are still NaT, we fall back to inference
+        if df['dt_temp'].isna().sum() / len(df) > 0.5:
+            st.warning("Explicit format parsing failed, falling back to inference. If errors persist, a new format is needed.")
+            df['dt_temp'] = pd.to_datetime(df[timestamp_col], errors='coerce')
+
+        # Drop the original column now that we have the datetime column
+        df.drop(columns=[timestamp_col], inplace=True)
+
+        # --- FINAL INDEX SETTING (Applies to ALL countries) ---
+        
+        # Set the successfully converted column as the DataFrame index
+        df.set_index('dt_temp', inplace=True)
+        df.index.name = 'Timestamp' # Rename the index
+        
+        # Ensure the index is UTC localized for consistency
+        try:
+             df.index = df.index.tz_localize('UTC', errors='coerce')
+        except:
+             # If index already has TZ info, remove it before localizing
+             df.index = df.index.tz_convert(None).tz_localize('UTC', errors='coerce')
         
         # Helper function to apply common filtering and feature engineering
         return df_filtered_after_special_handling(df)
@@ -100,7 +134,8 @@ def load_data(country):
         st.error(f"Data Column Error: {ve}")
         return None
     except Exception as e:
-        st.error(f"An unexpected error occurred during data loading: {e}")
+        # Catching the generic error and trying to provide more context
+        st.error(f"An unexpected error occurred during data loading: {e}. This may be caused by an issue in setting the DatetimeIndex.")
         return None
 
 def df_filtered_after_special_handling(df):
@@ -124,8 +159,11 @@ def df_filtered_after_special_handling(df):
          df_filtered = df.copy()
     else:
         # We need to drop NaT entries first to prevent errors in .hour access
-        df.dropna(axis=0, subset=[df.index.name], inplace=True)
-        df_filtered = df[(df['GHI'] > 0) | (df.index.hour < 6) | (df.index.hour > 18)].copy()
+        # Note: df.index.name might be None if it's an unnamed index
+        df_filtered = df.dropna(axis=0, subset=[df.index.name] if df.index.name else None).copy()
+
+        # The GHI filtering logic
+        df_filtered = df_filtered[(df_filtered['GHI'] > 0) | (df_filtered.index.hour < 6) | (df_filtered.index.hour > 18)].copy()
     
     # Feature Engineering (Month, DayOfWeek for plotting)
     # This must be done on a DatetimeIndex
@@ -136,6 +174,7 @@ def df_filtered_after_special_handling(df):
         st.warning("Cannot create time-based features; Index is not a DatetimeIndex.")
         
     return df_filtered
+
 
 def apply_savgol_filter(series, window_length=51, polyorder=3):
     """Applies Savitzky-Golay filter for smoothing."""
