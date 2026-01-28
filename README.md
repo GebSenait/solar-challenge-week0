@@ -1,4 +1,4 @@
-﻿# ☀️ Solar Challenge Week 0
+﻿# ☀️ Solar Analytics Dashboard
 
 Interactive Streamlit dashboard for exploratory solar irradiance analytics and lightweight modeling.
 
